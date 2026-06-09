@@ -220,10 +220,17 @@
     const menu = document.createElement('div');
     menu.className = 'menu-dropdown';
     menu.style.cssText = `top:${rect.bottom + 4}px; right:${document.documentElement.clientWidth - rect.right}px`;
+    const installedAlready = isInStandaloneMode();
     menu.innerHTML = `
       <button class="menu-item" data-menu="import">📂 Importar fichas (JSON)</button>
       <div class="divider"></div>
-      <button class="menu-item" data-menu="export-all">💾 Exportar todas (JSON)</button>`;
+      <button class="menu-item" data-menu="export-all">💾 Exportar todas (JSON)</button>
+      <div class="divider"></div>
+      ${installedAlready
+        ? `<button class="menu-item" data-menu="install" disabled style="opacity:.4;cursor:default">📲 App ya instalada</button>`
+        : `<button class="menu-item" data-menu="install">📲 Instalar app</button>`}
+      <div class="divider"></div>
+      <button class="menu-item danger" data-menu="clear">🗑️ Limpiar caché y datos</button>`;
 
     document.body.appendChild(overlay);
     document.body.appendChild(menu);
@@ -238,10 +245,69 @@
     overlay.addEventListener('click', cleanup);
     menu.querySelectorAll('[data-menu]').forEach(item => {
       item.addEventListener('click', () => {
+        if (item.disabled) return;
         cleanup();
         if (item.dataset.menu === 'import') triggerImport();
         if (item.dataset.menu === 'export-all') exportAllJSON();
+        if (item.dataset.menu === 'install') triggerInstall();
+        if (item.dataset.menu === 'clear') showClearDialog();
       });
+    });
+  }
+
+  function triggerInstall() {
+    if (isIOS()) {
+      showInstallIOSDialog();
+    } else if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      deferredInstallPrompt.userChoice.then(() => {
+        deferredInstallPrompt = null;
+      });
+    } else {
+      showInstallGenericDialog();
+    }
+  }
+
+  function showInstallIOSDialog() {
+    const overlay = document.createElement('div');
+    overlay.className = 'dialog-overlay';
+    overlay.innerHTML = `
+      <div class="dialog">
+        <div class="dialog-title">📲 Instalar en iPhone / iPad</div>
+        <div class="dialog-message">
+          <ol style="padding-left:18px; line-height:2">
+            <li>Toca el botón <strong>Compartir</strong> <span style="font-size:16px">⎙</span> en la barra de Safari</li>
+            <li>Desplázate y toca <strong>"Añadir a pantalla de inicio"</strong></li>
+            <li>Confirma tocando <strong>"Añadir"</strong></li>
+          </ol>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn btn-primary btn-sm" data-action="close">Entendido</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target.dataset.action === 'close' || e.target === overlay) overlay.remove();
+    });
+  }
+
+  function showInstallGenericDialog() {
+    const overlay = document.createElement('div');
+    overlay.className = 'dialog-overlay';
+    overlay.innerHTML = `
+      <div class="dialog">
+        <div class="dialog-title">📲 Instalar app</div>
+        <div class="dialog-message">
+          Para instalar, busca la opción <strong>"Instalar aplicación"</strong> o <strong>"Añadir a pantalla de inicio"</strong> en el menú de tu navegador.<br><br>
+          <span style="color:var(--text-secondary); font-size:13px">Nota: algunos navegadores requieren que la página esté servida por HTTPS para permitir la instalación.</span>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn btn-primary btn-sm" data-action="close">Entendido</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target.dataset.action === 'close' || e.target === overlay) overlay.remove();
     });
   }
 
@@ -254,7 +320,7 @@
       ficha = {
         id: crypto.randomUUID(),
         cueva: '', punto: '', fecha: '', horaInicio: '', horaFin: '',
-        agua: '', aguaTipo: [],
+        agua: '', aguaTipo: { corriendo: null, estancada: null },
         seccionTransversal: '',
         parametros: { humedad: false, temperatura: false, presion: false, velViento: false, co2: false },
         equiposRadiacion: { alphaE: false, gammaScout: false, gmqGmc600: false, dosimetros: false, sondaBeta: false },
@@ -348,13 +414,9 @@
           </div>
           <div class="conditional-field ${aguaTipoVisible}" id="agua-tipo-field">
             <label>Tipo de agua</label>
-            <div class="checkbox-group">
-              <label class="checkbox-option ${f.aguaTipo?.includes('corriendo') ? 'selected' : ''}">
-                <input type="checkbox" name="aguaTipo" value="corriendo" ${f.aguaTipo?.includes('corriendo') ? 'checked' : ''}> Corriendo
-              </label>
-              <label class="checkbox-option ${f.aguaTipo?.includes('estancada') ? 'selected' : ''}">
-                <input type="checkbox" name="aguaTipo" value="estancada" ${f.aguaTipo?.includes('estancada') ? 'checked' : ''}> Estancada
-              </label>
+            <div class="toggle-grid">
+              ${toggleItem('Corriendo', 'aguaTipo.corriendo', aguaTipoVal(f, 'corriendo'))}
+              ${toggleItem('Estancada', 'aguaTipo.estancada', aguaTipoVal(f, 'estancada'))}
             </div>
           </div>
           <div class="field">
@@ -471,13 +533,24 @@
       </div>`;
   }
 
+  // Normalize aguaTipo: supports old array format and new object format
+  function aguaTipoVal(f, key) {
+    const at = f.aguaTipo;
+    if (!at) return null;
+    if (Array.isArray(at)) return at.includes(key) ? true : null; // old format: no selection = null
+    return at[key] ?? null;
+  }
+
   function toggleItem(label, name, value) {
+    // value: true=Sí, false=No, null/undefined=sin seleccionar
+    const yesCls = value === true  ? 'active-yes' : '';
+    const noCls  = value === false ? 'active-no'  : '';
     return `
       <div class="toggle-item">
         <div class="toggle-item-label">${label}</div>
         <div class="toggle-item-options">
-          <button class="toggle-btn ${value === true ? 'active-yes' : ''}" data-toggle="${name}" data-value="true">Sí</button>
-          <button class="toggle-btn ${value === false || value === undefined ? 'active-no' : ''}" data-toggle="${name}" data-value="false">No</button>
+          <button class="toggle-btn ${yesCls}" data-toggle="${name}" data-value="true">Sí</button>
+          <button class="toggle-btn ${noCls}"  data-toggle="${name}" data-value="false">No</button>
         </div>
       </div>`;
   }
@@ -533,19 +606,17 @@
       });
     });
 
-    // Toggle buttons (Sí/No for parametros, equipos)
+    // Toggle buttons (Sí/No for all toggle fields)
     $$('[data-toggle]').forEach(btn => {
       btn.addEventListener('click', () => {
         const name = btn.dataset.toggle;
-        const value = btn.dataset.value === 'true';
-        // Update button states
-        const siblings = $$(`[data-toggle="${name}"]`);
-        siblings.forEach(s => {
-          const sVal = s.dataset.value === 'true';
-          s.className = `toggle-btn ${sVal === value ? (value ? 'active-yes' : 'active-no') : ''}`;
-        });
-        // Set value
-        setNestedValue(ficha, name, value);
+        const isYes = btn.dataset.value === 'true';
+        // Find the pair
+        const yesBtn = document.querySelector(`[data-toggle="${name}"][data-value="true"]`);
+        const noBtn  = document.querySelector(`[data-toggle="${name}"][data-value="false"]`);
+        yesBtn.className = `toggle-btn${isYes  ? ' active-yes' : ''}`;
+        noBtn.className  = `toggle-btn${!isYes ? ' active-no'  : ''}`;
+        setNestedValue(ficha, name, isYes);
         save();
       });
     });
@@ -658,21 +729,27 @@
     const aguaRadio = document.querySelector('input[name="agua"]:checked');
     ficha.agua = aguaRadio?.value || '';
 
-    // Agua tipo
-    ficha.aguaTipo = $$('input[name="aguaTipo"]:checked').map(cb => cb.value);
-
-    // Toggle buttons
-    const toggleNames = ['parametros.humedad','parametros.temperatura','parametros.presion','parametros.velViento','parametros.co2',
+    // Toggle buttons (includes aguaTipo toggles now)
+    const toggleNames = [
+      'aguaTipo.corriendo', 'aguaTipo.estancada',
+      'parametros.humedad','parametros.temperatura','parametros.presion','parametros.velViento','parametros.co2',
       'equiposRadiacion.alphaE','equiposRadiacion.gammaScout','equiposRadiacion.gmqGmc600','equiposRadiacion.dosimetros','equiposRadiacion.sondaBeta',
-      'equiposAdicionales.medidorRadiacionCosmica'];
+      'equiposAdicionales.medidorRadiacionCosmica',
+    ];
 
+    ficha.aguaTipo = {};
     ficha.parametros = {};
     ficha.equiposRadiacion = {};
     ficha.equiposAdicionales = {};
 
     toggleNames.forEach(name => {
-      const activeBtn = document.querySelector(`[data-toggle="${name}"].active-yes`);
-      setNestedValue(ficha, name, !!activeBtn);
+      const yesBtn = document.querySelector(`[data-toggle="${name}"][data-value="true"]`);
+      const noBtn  = document.querySelector(`[data-toggle="${name}"][data-value="false"]`);
+      // null = neither pressed, true/false = explicitly selected
+      const val = yesBtn?.classList.contains('active-yes') ? true
+               : noBtn?.classList.contains('active-no')   ? false
+               : null;
+      setNestedValue(ficha, name, val);
     });
 
     return ficha;
@@ -721,6 +798,70 @@
         if (item.dataset.menu === 'delete') deleteFicha(ficha.id, true);
       });
     });
+  }
+
+  // =========================================
+  // Clear Cache & Data
+  // =========================================
+  function showClearDialog() {
+    const overlay = document.createElement('div');
+    overlay.className = 'dialog-overlay';
+    overlay.innerHTML = `
+      <div class="dialog">
+        <div class="dialog-title">🗑️ Limpiar caché y datos</div>
+        <div class="dialog-message">
+          <strong style="color:var(--warning)">⚠️ Guarda tus fichas en JSON antes de limpiar.</strong><br><br>
+          Esta acción eliminará <strong>todas las fichas, fotos y caché</strong> del dispositivo. No se puede deshacer.<br><br>
+          Podrás volver a importar tus fichas desde los archivos JSON exportados.
+        </div>
+        <div class="dialog-actions" style="flex-direction:column; gap:8px">
+          <button class="btn btn-primary btn-full" data-action="export-first">💾 Exportar todo primero</button>
+          <div style="display:flex; gap:8px; width:100%">
+            <button class="btn btn-ghost btn-sm" style="flex:1" data-action="cancel">Cancelar</button>
+            <button class="btn btn-danger btn-sm" style="flex:1" data-action="clear-now">Limpiar de todas formas</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', async (e) => {
+      const action = e.target.dataset.action;
+      if (!action && e.target !== overlay) return;
+      if (action === 'export-first') {
+        await exportAllJSON();
+        // Keep dialog open so user can then choose to clear
+        return;
+      }
+      overlay.remove();
+      if (action === 'clear-now') await clearAllData();
+    });
+  }
+
+  async function clearAllData() {
+    showToast('Limpiando datos...', '', 4000);
+    try {
+      // Delete all fichas (and their photos, via DB.deleteFicha cascade)
+      const fichas = await DB.getAllFichas();
+      for (const f of fichas) await DB.deleteFicha(f.id);
+
+      // Clear service worker caches
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+
+      // Unregister service worker so it re-registers fresh on next load
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+
+      showToast('Datos y caché eliminados', 'success');
+      await renderHome();
+    } catch (err) {
+      console.error(err);
+      showToast('Error al limpiar', 'error');
+    }
   }
 
   // =========================================
@@ -900,45 +1041,15 @@
       || window.navigator.standalone === true;
   }
 
-  // Android / Desktop: native install prompt
+  // Capture the install prompt for Android/desktop — used when menu option is tapped
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     deferredInstallPrompt = e;
-    document.getElementById('install-banner')?.classList.remove('hidden');
   });
 
   window.addEventListener('appinstalled', () => {
-    document.getElementById('install-banner')?.classList.add('hidden');
     deferredInstallPrompt = null;
     showToast('App instalada correctamente', 'success');
-  });
-
-  // iOS: show manual instructions if not already installed
-  if (isIOS() && !isInStandaloneMode()) {
-    // Small delay so it doesn't flash on load
-    setTimeout(() => {
-      const dismissed = sessionStorage.getItem('ios-banner-dismissed');
-      if (!dismissed) {
-        document.getElementById('ios-banner')?.classList.remove('hidden');
-      }
-    }, 2000);
-  }
-
-  document.addEventListener('click', (e) => {
-    if (e.target.id === 'install-btn' && deferredInstallPrompt) {
-      deferredInstallPrompt.prompt();
-      deferredInstallPrompt.userChoice.then(() => {
-        document.getElementById('install-banner')?.classList.add('hidden');
-        deferredInstallPrompt = null;
-      });
-    }
-    if (e.target.id === 'install-dismiss') {
-      document.getElementById('install-banner')?.classList.add('hidden');
-    }
-    if (e.target.id === 'ios-dismiss') {
-      document.getElementById('ios-banner')?.classList.add('hidden');
-      sessionStorage.setItem('ios-banner-dismissed', '1');
-    }
   });
 
   // =========================================

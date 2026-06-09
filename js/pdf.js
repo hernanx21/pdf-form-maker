@@ -31,6 +31,14 @@ const PDFGen = (() => {
     return val ? CHECKMARK : EMPTY_BOX;
   }
 
+  // Normalize aguaTipo: supports old array format and new object format
+  function getAguaTipo(ficha, key) {
+    const at = ficha.aguaTipo;
+    if (!at) return false;
+    if (Array.isArray(at)) return at.includes(key);
+    return at[key] === true;
+  }
+
   function formatDate(dateStr) {
     if (!dateStr) return '—';
     const [y, m, d] = dateStr.split('-');
@@ -113,7 +121,7 @@ const PDFGen = (() => {
         { content: 'Tipo', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
         {
           content: ficha.agua === 'si'
-            ? `Corriendo ${check(ficha.aguaTipo?.includes('corriendo'))}   Estancada ${check(ficha.aguaTipo?.includes('estancada'))}`
+            ? `Corriendo ${check(getAguaTipo(ficha, 'corriendo'))}   Estancada ${check(getAguaTipo(ficha, 'estancada'))}`
             : '—',
         },
       ],
