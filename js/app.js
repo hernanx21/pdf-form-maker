@@ -890,6 +890,17 @@
   // =========================================
   // PWA Install
   // =========================================
+
+  function isIOS() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+  }
+
+  function isInStandaloneMode() {
+    return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true;
+  }
+
+  // Android / Desktop: native install prompt
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     deferredInstallPrompt = e;
@@ -902,6 +913,17 @@
     showToast('App instalada correctamente', 'success');
   });
 
+  // iOS: show manual instructions if not already installed
+  if (isIOS() && !isInStandaloneMode()) {
+    // Small delay so it doesn't flash on load
+    setTimeout(() => {
+      const dismissed = sessionStorage.getItem('ios-banner-dismissed');
+      if (!dismissed) {
+        document.getElementById('ios-banner')?.classList.remove('hidden');
+      }
+    }, 2000);
+  }
+
   document.addEventListener('click', (e) => {
     if (e.target.id === 'install-btn' && deferredInstallPrompt) {
       deferredInstallPrompt.prompt();
@@ -912,6 +934,10 @@
     }
     if (e.target.id === 'install-dismiss') {
       document.getElementById('install-banner')?.classList.add('hidden');
+    }
+    if (e.target.id === 'ios-dismiss') {
+      document.getElementById('ios-banner')?.classList.add('hidden');
+      sessionStorage.setItem('ios-banner-dismissed', '1');
     }
   });
 
