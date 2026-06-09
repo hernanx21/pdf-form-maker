@@ -2,7 +2,7 @@
  * Service Worker — cache-first strategy
  * Pre-caches all app assets on install
  */
-const CACHE_NAME = 'ficha-medicion-v4';
+const CACHE_NAME = 'ficha-medicion-v6';
 
 const ASSETS = [
   './',

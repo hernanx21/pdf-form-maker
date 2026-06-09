@@ -1,42 +1,45 @@
 /**
  * PDF generation for Ficha Técnica de Medición
- * Replicates the Excel format with color-coded sections
+ * Yes/No values use colored cells (no Unicode) for universal PDF compatibility
  */
 const PDFGen = (() => {
 
-  // Color palette (RGB arrays)
   const COLORS = {
-    titleBg:    [255, 192, 0],    // #FFC000 amber
+    titleBg:    [255, 192, 0],
     titleText:  [255, 255, 255],
-    sec1Bg:     [46, 117, 182],   // #2E75B6 blue
-    sec2Bg:     [46, 117, 182],
-    sec3Bg:     [46, 117, 182],
-    sec4Bg:     [46, 117, 182],
-    sec5Bg:     [0, 176, 240],    // #00B0F0 light blue
+    secBg:      [46, 117, 182],
+    sec5Bg:     [0, 176, 240],
     secText:    [255, 255, 255],
-    rowAlt:     [240, 246, 255],
-    rowNormal:  [255, 255, 255],
     gridBorder: [180, 198, 220],
     labelBg:    [221, 235, 247],
     labelText:  [31, 73, 125],
-    valueBg:    [255, 255, 255],
     valueText:  [0, 0, 0],
+    yesGreenBg: [198, 239, 206],
+    yesGreenTx: [0, 97, 0],
+    noRedBg:    [255, 199, 206],
+    noRedTx:    [156, 0, 6],
+    noneBg:     [242, 242, 242],
+    noneTx:     [140, 140, 140],
     footerText: [120, 120, 120],
   };
 
-  const CHECKMARK = '☑'; // ☑
-  const EMPTY_BOX = '☐'; // ☐
-
-  function check(val) {
-    return val ? CHECKMARK : EMPTY_BOX;
+  // Returns a styled autoTable cell reflecting a yes/no/unset value
+  function ynCell(val, extraStyles = {}) {
+    if (val === true)  return { content: 'SI',  styles: { fillColor: COLORS.yesGreenBg, textColor: COLORS.yesGreenTx, fontStyle: 'bold', halign: 'center', ...extraStyles } };
+    if (val === false) return { content: 'NO',  styles: { fillColor: COLORS.noRedBg,    textColor: COLORS.noRedTx,    fontStyle: 'bold', halign: 'center', ...extraStyles } };
+    return               { content: '—',   styles: { fillColor: COLORS.noneBg,      textColor: COLORS.noneTx,     halign: 'center', ...extraStyles } };
   }
 
-  // Normalize aguaTipo: supports old array format and new object format
-  function getAguaTipo(ficha, key) {
-    const at = ficha.aguaTipo;
-    if (!at) return false;
-    if (Array.isArray(at)) return at.includes(key);
-    return at[key] === true;
+  function labelCell(text, colSpan) {
+    const cell = { content: text, styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } };
+    if (colSpan) cell.colSpan = colSpan;
+    return cell;
+  }
+
+  function valueCell(text, colSpan) {
+    const cell = { content: text ?? '—' };
+    if (colSpan) cell.colSpan = colSpan;
+    return cell;
   }
 
   function formatDate(dateStr) {
@@ -46,13 +49,43 @@ const PDFGen = (() => {
     return `${d} ${months[parseInt(m)-1]} ${y}`;
   }
 
-  function formatTime(timeStr) {
-    return timeStr || '—';
+  function formatTime(t) { return t || '—'; }
+
+  // Normalize aguaTipo: supports old array format and new object format
+  function getAguaTipo(ficha, key) {
+    const at = ficha.aguaTipo;
+    if (!at) return null;
+    if (Array.isArray(at)) return at.includes(key) ? true : null;
+    const v = at[key];
+    return v === true ? true : v === false ? false : null;
   }
 
-  function yesNo(val) {
-    return val === 'si' ? 'Sí' : (val === 'no' ? 'No' : '—');
+  function aguaTipoSummary(ficha) {
+    const corriendo = getAguaTipo(ficha, 'corriendo');
+    const estancada = getAguaTipo(ficha, 'estancada');
+    const parts = [];
+    if (corriendo === true)  parts.push('Corriendo');
+    if (estancada === true)  parts.push('Estancada');
+    if (parts.length) return parts.join(' + ');
+    if (corriendo === false && estancada === false) return 'Ninguno';
+    return '—';
   }
+
+  const TABLE_STYLES = {
+    fontSize: 9.5,
+    cellPadding: 3,
+    lineColor: COLORS.gridBorder,
+    lineWidth: 0.3,
+    textColor: COLORS.valueText,
+    valign: 'middle',
+  };
+
+  const COL_STYLES = {
+    0: { cellWidth: 40 },
+    1: { cellWidth: 'auto' },
+    2: { cellWidth: 40 },
+    3: { cellWidth: 'auto' },
+  };
 
   async function generate(ficha, fotos = []) {
     const { jsPDF } = window.jspdf;
@@ -64,22 +97,30 @@ const PDFGen = (() => {
     const contentW = pageW - margin * 2;
     let y = margin;
 
-    // Helper: draw filled rect with text
-    function sectionHeader(title, bgColor, textColor = COLORS.secText) {
+    function sectionHeader(title, bgColor = COLORS.secBg) {
       doc.setFillColor(...bgColor);
       doc.rect(margin, y, contentW, 9, 'F');
-      doc.setTextColor(...textColor);
+      doc.setTextColor(...COLORS.secText);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'bold');
       doc.text(title.toUpperCase(), margin + 4, y + 6.2);
       y += 9;
     }
 
-    function checkPageBreak(needed = 20) {
-      if (y + needed > pageH - margin) {
-        doc.addPage();
-        y = margin;
-      }
+    function autoTable(body, colStyles = COL_STYLES) {
+      doc.autoTable({
+        startY: y,
+        margin: { left: margin, right: margin },
+        body,
+        theme: 'grid',
+        styles: TABLE_STYLES,
+        columnStyles: colStyles,
+      });
+      y = doc.lastAutoTable.finalY + 6;
+    }
+
+    function checkPageBreak(needed = 24) {
+      if (y + needed > pageH - margin) { doc.addPage(); y = margin; }
     }
 
     // ---- TITLE ----
@@ -88,271 +129,135 @@ const PDFGen = (() => {
     doc.setTextColor(...COLORS.titleText);
     doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
-    doc.text('FICHA DE VARIABLES Y EQUIPOS DE MEDICIÓN', pageW / 2, y + 9.5, { align: 'center' });
+    doc.text('FICHA DE VARIABLES Y EQUIPOS DE MEDICION', pageW / 2, y + 9.5, { align: 'center' });
     y += 14 + 4;
 
-    // ---- SECTION 1: Detalles de cueva ----
+    // ---- SECTION 1 ----
     checkPageBreak(70);
-    sectionHeader('1. Detalles de cueva', COLORS.sec1Bg);
+    sectionHeader('1. Detalles de cueva');
 
-    const sec1Data = [
-      [
-        { content: 'Cueva', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: ficha.cueva || '—', colSpan: 1 },
-        { content: 'Punto', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: ficha.punto || '—' },
-      ],
-      [
-        { content: 'Fecha', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: formatDate(ficha.fecha), colSpan: 3 },
-      ],
-      [
-        { content: 'Hora inicio', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: formatTime(ficha.horaInicio) },
-        { content: 'Hora fin', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: formatTime(ficha.horaFin) },
-      ],
-      [
-        { content: 'Agua', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        {
-          content: `Sí ${check(ficha.agua === 'si')}   No ${check(ficha.agua === 'no')}`,
-          colSpan: 1,
-        },
-        { content: 'Tipo', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        {
-          content: ficha.agua === 'si'
-            ? `Corriendo ${check(getAguaTipo(ficha, 'corriendo'))}   Estancada ${check(getAguaTipo(ficha, 'estancada'))}`
-            : '—',
-        },
-      ],
-      [
-        { content: 'Sección transversal', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: ficha.seccionTransversal || '—', colSpan: 3 },
-      ],
-    ];
+    const aguaVal = ficha.agua === 'si' ? true : ficha.agua === 'no' ? false : null;
 
-    doc.autoTable({
-      startY: y,
-      margin: { left: margin, right: margin },
-      body: sec1Data,
-      theme: 'grid',
-      styles: {
-        fontSize: 9.5,
-        cellPadding: 3,
-        lineColor: COLORS.gridBorder,
-        lineWidth: 0.3,
-        textColor: COLORS.valueText,
-        valign: 'middle',
-      },
-      columnStyles: {
-        0: { cellWidth: 36 },
-        1: { cellWidth: 'auto' },
-        2: { cellWidth: 36 },
-        3: { cellWidth: 'auto' },
-      },
-    });
-    y = doc.lastAutoTable.finalY + 6;
+    autoTable([
+      [ labelCell('Cueva'), valueCell(ficha.cueva),  labelCell('Punto'), valueCell(ficha.punto) ],
+      [ labelCell('Fecha'), { content: formatDate(ficha.fecha), colSpan: 3 } ],
+      [ labelCell('Hora inicio'), valueCell(formatTime(ficha.horaInicio)), labelCell('Hora fin'), valueCell(formatTime(ficha.horaFin)) ],
+      [ labelCell('Agua'),        ynCell(aguaVal),
+        labelCell('Tipo'),        valueCell(ficha.agua === 'si' ? aguaTipoSummary(ficha) : '—') ],
+      [ labelCell('Seccion transversal'), { content: ficha.seccionTransversal || '—', colSpan: 3 } ],
+    ]);
 
-    // ---- SECTION 2: Parámetros ambientales ----
+    // ---- SECTION 2 ----
     checkPageBreak(50);
-    sectionHeader('2. Medición de parámetros ambientales', COLORS.sec2Bg);
+    sectionHeader('2. Medicion de parametros ambientales');
 
-    const params = ficha.parametros || {};
-    const sec2Data = [
-      [
-        { content: 'Humedad', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(params.humedad)}   No ${check(!params.humedad)}` },
-        { content: 'Temperatura', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(params.temperatura)}   No ${check(!params.temperatura)}` },
-      ],
-      [
-        { content: 'Presión', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(params.presion)}   No ${check(!params.presion)}` },
-        { content: 'Vel. del viento', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(params.velViento)}   No ${check(!params.velViento)}` },
-      ],
-      [
-        { content: 'CO2', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(params.co2)}   No ${check(!params.co2)}` },
-        { content: '', styles: { fillColor: COLORS.rowNormal } },
-        { content: '', styles: { fillColor: COLORS.rowNormal } },
-      ],
-    ];
+    const p = ficha.parametros || {};
+    autoTable([
+      [ labelCell('Humedad'),        ynCell(p.humedad),    labelCell('Temperatura'),     ynCell(p.temperatura) ],
+      [ labelCell('Presion'),        ynCell(p.presion),    labelCell('Vel. del viento'), ynCell(p.velViento)   ],
+      [ labelCell('CO2'),            ynCell(p.co2),        { content: '' },              { content: '' }       ],
+    ]);
 
-    doc.autoTable({
-      startY: y,
-      margin: { left: margin, right: margin },
-      body: sec2Data,
-      theme: 'grid',
-      styles: {
-        fontSize: 9.5,
-        cellPadding: 3,
-        lineColor: COLORS.gridBorder,
-        lineWidth: 0.3,
-        textColor: COLORS.valueText,
-        valign: 'middle',
-      },
-      columnStyles: {
-        0: { cellWidth: 36 },
-        1: { cellWidth: 'auto' },
-        2: { cellWidth: 36 },
-        3: { cellWidth: 'auto' },
-      },
-    });
-    y = doc.lastAutoTable.finalY + 6;
-
-    // ---- SECTION 3: Equipos de radiación ionizante ----
+    // ---- SECTION 3 ----
     checkPageBreak(50);
-    sectionHeader('3. Equipos de radiación ionizante', COLORS.sec3Bg);
+    sectionHeader('3. Equipos de radiacion ionizante');
 
-    const equipos = ficha.equiposRadiacion || {};
-    const sec3Data = [
-      [
-        { content: 'AlphaE', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(equipos.alphaE)}   No ${check(!equipos.alphaE)}` },
-        { content: 'GammaScout', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(equipos.gammaScout)}   No ${check(!equipos.gammaScout)}` },
-      ],
-      [
-        { content: 'GMQ-GMC+600', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(equipos.gmqGmc600)}   No ${check(!equipos.gmqGmc600)}` },
-        { content: 'Dosímetros', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(equipos.dosimetros)}   No ${check(!equipos.dosimetros)}` },
-      ],
-      [
-        { content: 'Sonda Beta', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-        { content: `Sí ${check(equipos.sondaBeta)}   No ${check(!equipos.sondaBeta)}` },
-        { content: '', styles: { fillColor: COLORS.rowNormal } },
-        { content: '', styles: { fillColor: COLORS.rowNormal } },
-      ],
-    ];
+    const eq = ficha.equiposRadiacion || {};
+    autoTable([
+      [ labelCell('AlphaE'),      ynCell(eq.alphaE),    labelCell('GammaScout'),  ynCell(eq.gammaScout) ],
+      [ labelCell('GMQ-GMC+600'), ynCell(eq.gmqGmc600), labelCell('Dosimetros'),  ynCell(eq.dosimetros) ],
+      [ labelCell('Sonda Beta'),  ynCell(eq.sondaBeta), { content: '' },          { content: '' }       ],
+    ]);
 
-    doc.autoTable({
-      startY: y,
-      margin: { left: margin, right: margin },
-      body: sec3Data,
-      theme: 'grid',
-      styles: {
-        fontSize: 9.5,
-        cellPadding: 3,
-        lineColor: COLORS.gridBorder,
-        lineWidth: 0.3,
-        textColor: COLORS.valueText,
-        valign: 'middle',
-      },
-      columnStyles: {
-        0: { cellWidth: 36 },
-        1: { cellWidth: 'auto' },
-        2: { cellWidth: 36 },
-        3: { cellWidth: 'auto' },
-      },
-    });
-    y = doc.lastAutoTable.finalY + 6;
+    // ---- SECTION 4 ----
+    checkPageBreak(28);
+    sectionHeader('4. Equipos adicionales');
 
-    // ---- SECTION 4: Equipos adicionales ----
-    checkPageBreak(30);
-    sectionHeader('4. Equipos adicionales', COLORS.sec4Bg);
+    const ad = ficha.equiposAdicionales || {};
+    autoTable([
+      [ labelCell('Medidor de radiacion cosmica', 1), ynCell(ad.medidorRadiacionCosmica, { cellWidth: 30 }) ],
+    ], { 0: { cellWidth: 'auto' }, 1: { cellWidth: 30 } });
 
-    const adicionales = ficha.equiposAdicionales || {};
-    doc.autoTable({
-      startY: y,
-      margin: { left: margin, right: margin },
-      body: [
-        [
-          { content: 'Medidor de radiación cósmica', styles: { fillColor: COLORS.labelBg, textColor: COLORS.labelText, fontStyle: 'bold' } },
-          { content: `Sí ${check(adicionales.medidorRadiacionCosmica)}   No ${check(!adicionales.medidorRadiacionCosmica)}`, colSpan: 3 },
-        ],
-      ],
-      theme: 'grid',
-      styles: {
-        fontSize: 9.5,
-        cellPadding: 3,
-        lineColor: COLORS.gridBorder,
-        lineWidth: 0.3,
-        textColor: COLORS.valueText,
-        valign: 'middle',
-      },
-      columnStyles: {
-        0: { cellWidth: 64 },
-        1: { cellWidth: 'auto' },
-      },
-    });
-    y = doc.lastAutoTable.finalY + 6;
-
-    // ---- SECTION 5: Observaciones ----
-    checkPageBreak(40);
+    // ---- SECTION 5 ----
+    checkPageBreak(36);
     sectionHeader('5. Observaciones y/o notas', COLORS.sec5Bg);
 
-    const obsText = ficha.observaciones || '';
-    const obsLines = doc.splitTextToSize(obsText || '(Sin observaciones)', contentW - 8);
-    const obsHeight = Math.max(20, obsLines.length * 5 + 8);
-
-    doc.setFillColor(...COLORS.rowNormal);
+    const obsText = ficha.observaciones || '(Sin observaciones)';
+    const obsLines = doc.splitTextToSize(obsText, contentW - 8);
+    const obsH = Math.max(20, obsLines.length * 5 + 8);
+    doc.setFillColor(255, 255, 255);
     doc.setDrawColor(...COLORS.gridBorder);
     doc.setLineWidth(0.3);
-    doc.rect(margin, y, contentW, obsHeight, 'FD');
+    doc.rect(margin, y, contentW, obsH, 'FD');
     doc.setTextColor(...COLORS.valueText);
     doc.setFontSize(9.5);
     doc.setFont('helvetica', 'normal');
     doc.text(obsLines, margin + 4, y + 5);
-    y += obsHeight + 6;
+    y += obsH + 6;
 
-    // ---- FOTOS ----
-    if (fotos && fotos.length > 0) {
-      checkPageBreak(20);
-      sectionHeader('Fotografías adjuntas', [80, 80, 80]);
-      y += 4;
+    // ---- FOTOS — una por página, respetando relación de aspecto ----
+    for (let i = 0; i < fotos.length; i++) {
+      doc.addPage();
 
-      const photosPerRow = 2;
-      const photoW = (contentW - (photosPerRow - 1) * 6) / photosPerRow;
-      const photoH = photoW * 0.75;
+      // Header de sección en cada página de foto
+      let fy = margin;
+      doc.setFillColor(80, 80, 80);
+      doc.rect(margin, fy, contentW, 9, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`FOTOGRAFIA ${i + 1} DE ${fotos.length}`, margin + 4, fy + 6.2);
+      fy += 9 + 4;
 
-      for (let i = 0; i < fotos.length; i++) {
-        const col = i % photosPerRow;
-        const row = Math.floor(i / photosPerRow);
+      // Espacio disponible para la imagen (deja 10mm abajo para el caption)
+      const availW = contentW;
+      const availH = pageH - fy - margin - 10;
 
-        if (col === 0 && row > 0) y += photoH + 8;
-        checkPageBreak(photoH + 10);
+      try {
+        const dataUrl = await blobToDataUrl(fotos[i].blob);
+        const dims    = await getImageDimensions(dataUrl);
 
-        const x = margin + col * (photoW + 6);
+        // Escala uniforme para que quepa sin recortar
+        const scale  = Math.min(availW / dims.w, availH / dims.h);
+        const pdfW   = dims.w * scale;
+        const pdfH   = dims.h * scale;
 
-        try {
-          const dataUrl = await blobToDataUrl(fotos[i].blob);
-          const ext = fotos[i].blob.type.includes('png') ? 'PNG' : 'JPEG';
-          doc.addImage(dataUrl, ext, x, y, photoW, photoH, undefined, 'MEDIUM');
-        } catch {
-          doc.setFillColor(220, 220, 220);
-          doc.rect(x, y, photoW, photoH, 'F');
-          doc.setTextColor(100, 100, 100);
-          doc.setFontSize(8);
-          doc.text('[Imagen no disponible]', x + photoW / 2, y + photoH / 2, { align: 'center' });
-        }
+        // Centrar horizontal y verticalmente en el espacio disponible
+        const ix = margin + (availW - pdfW) / 2;
+        const iy = fy     + (availH - pdfH) / 2;
 
-        // Caption
-        doc.setFontSize(7);
-        doc.setTextColor(...COLORS.footerText);
-        doc.text(`Foto ${i + 1}: ${fotos[i].name || ''}`, x, y + photoH + 4);
+        const ext = fotos[i].blob.type.includes('png') ? 'PNG' : 'JPEG';
+        doc.addImage(dataUrl, ext, ix, iy, pdfW, pdfH, undefined, 'MEDIUM');
+      } catch {
+        doc.setFillColor(220, 220, 220);
+        doc.rect(margin, fy, contentW, availH, 'F');
+        doc.setTextColor(100, 100, 100);
+        doc.setFontSize(10);
+        doc.text('[Imagen no disponible]', pageW / 2, fy + availH / 2, { align: 'center' });
       }
-      y += photoH + 12;
+
+      // Caption centrado al pie
+      doc.setFontSize(8);
+      doc.setTextColor(...COLORS.footerText);
+      const caption = fotos[i].name ? `${fotos[i].name}` : `Foto ${i + 1}`;
+      doc.text(caption, pageW / 2, pageH - margin + 2, { align: 'center' });
     }
 
     // ---- FOOTER ----
-    const totalPages = doc.getNumberOfPages();
-    for (let p = 1; p <= totalPages; p++) {
+    const total = doc.getNumberOfPages();
+    for (let p = 1; p <= total; p++) {
       doc.setPage(p);
       doc.setFontSize(7.5);
       doc.setTextColor(...COLORS.footerText);
       doc.text(
-        `Generado: ${new Date().toLocaleString('es')}   |   Ficha ID: ${ficha.id?.substring(0, 8) || '—'}`,
+        `Generado: ${new Date().toLocaleString('es')}   |   ID: ${(ficha.id || '').substring(0, 8)}`,
         margin, pageH - 8
       );
-      doc.text(`Pág. ${p} / ${totalPages}`, pageW - margin, pageH - 8, { align: 'right' });
+      doc.text(`Pag. ${p} / ${total}`, pageW - margin, pageH - 8, { align: 'right' });
     }
 
-    // Save
-    const safeName = (ficha.cueva || 'Ficha').replace(/[^a-zA-Z0-9_\-áéíóúÁÉÍÓÚüÜñÑ ]/g, '_');
-    const dateStr = ficha.fecha || new Date().toISOString().substring(0, 10);
-    doc.save(`Ficha_${safeName}_${dateStr}.pdf`);
+    const safeName = (ficha.cueva || 'Ficha').replace(/[^a-zA-Z0-9_\- ]/g, '_');
+    doc.save(`Ficha_${safeName}_${ficha.fecha || new Date().toISOString().substring(0, 10)}.pdf`);
   }
 
   function blobToDataUrl(blob) {
@@ -361,6 +266,15 @@ const PDFGen = (() => {
       reader.onload = () => resolve(reader.result);
       reader.onerror = reject;
       reader.readAsDataURL(blob);
+    });
+  }
+
+  function getImageDimensions(dataUrl) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload  = () => resolve({ w: img.naturalWidth,  h: img.naturalHeight });
+      img.onerror = () => resolve({ w: 1, h: 1 });
+      img.src = dataUrl;
     });
   }
 
