@@ -256,7 +256,8 @@ const PDFGen = (() => {
       doc.text(`Pag. ${p} / ${total}`, pageW - margin, pageH - 8, { align: 'right' });
     }
 
-    const safeName = (ficha.cueva || 'Ficha').replace(/[^a-zA-Z0-9_\- ]/g, '_');
+    const baseName = ficha.cueva ? (ficha.punto ? `${ficha.cueva}_${ficha.punto}` : ficha.cueva) : 'Ficha';
+    const safeName = baseName.replace(/[^a-zA-Z0-9_\- ]/g, '_');
     doc.save(`Ficha_${safeName}_${ficha.fecha || new Date().toISOString().substring(0, 10)}.pdf`);
   }
 

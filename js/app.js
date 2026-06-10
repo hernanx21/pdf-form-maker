@@ -903,7 +903,8 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const safeName = (ficha.cueva || 'Ficha').replace(/[^a-zA-Z0-9_\-áéíóúÁÉÍÓÚüÜñÑ ]/g, '_');
+    const baseName = ficha.cueva ? (ficha.punto ? `${ficha.cueva}_${ficha.punto}` : ficha.cueva) : 'Ficha';
+    const safeName = baseName.replace(/[^a-zA-Z0-9_\-áéíóúÁÉÍÓÚüÜñÑ ]/g, '_');
     a.download = `Ficha_${safeName}_${ficha.fecha || 'sin-fecha'}.json`;
     a.click();
     URL.revokeObjectURL(url);
